@@ -453,7 +453,7 @@ main = hspec do
               let hosts = ConnectionString.toHosts cs
               length hosts `shouldSatisfy` (> 0)
 
-      describe "equivalence tests" do
+      describe "equivalence tests of the internal representation" do
         it "postgresql://host1:1,host2:2,host3:3/ is equivalent to host=host1,host2,host3 port=1,2,3" do
           let url = "postgresql://host1:1,host2:2,host3:3/"
               kv = "host=host1,host2,host3 port=1,2,3"
@@ -462,6 +462,30 @@ main = hspec do
               -- They should represent the same connection
               -- At minimum, they should have the same number of hosts
               length (ConnectionString.toHosts cs1) `shouldBe` length (ConnectionString.toHosts cs2)
+            (Left err, _) -> expectationFailure ("URL parse error: " <> Text.unpack err)
+            (_, Left err) -> expectationFailure ("KV parse error: " <> Text.unpack err)
+
+        it "postgresql://host1:1,host2:2,host3/ is equivalent to host=host1,host2,host3 port=1,2" do
+          let url = "postgresql://host1:1,host2:2,host3/"
+              kv = "host=host1,host2,host3 port=1,2"
+          case (ConnectionString.parse url, ConnectionString.parse kv) of
+            (Right cs1, Right cs2) -> do
+              -- They should represent the same connection
+              let hosts1 = ConnectionString.toHosts cs1
+                  hosts2 = ConnectionString.toHosts cs2
+              hosts1 `shouldBe` hosts2
+            (Left err, _) -> expectationFailure ("URL parse error: " <> Text.unpack err)
+            (_, Left err) -> expectationFailure ("KV parse error: " <> Text.unpack err)
+
+        it "postgresql://host1:1,host2:1,host3:1/ is equivalent to host=host1,host2,host3 port=1" do
+          let url = "postgresql://host1:1,host2:1,host3:1/"
+              kv = "host=host1,host2,host3 port=1"
+          case (ConnectionString.parse url, ConnectionString.parse kv) of
+            (Right cs1, Right cs2) -> do
+              -- They should represent the same connection
+              let hosts1 = ConnectionString.toHosts cs1
+                  hosts2 = ConnectionString.toHosts cs2
+              hosts1 `shouldBe` hosts2
             (Left err, _) -> expectationFailure ("URL parse error: " <> Text.unpack err)
             (_, Left err) -> expectationFailure ("KV parse error: " <> Text.unpack err)
 
