@@ -3,6 +3,7 @@
 module PostgresqlConnectionString.Parsers where
 
 import qualified Data.CharSet as CharSet
+import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import qualified PercentEncoding
@@ -101,7 +102,11 @@ getKeyValueConnectionString = do
           let hostList = Text.splitOn "," h
               portList = maybe [] (Text.splitOn ",") portText
               -- Pair up hosts with ports, padding with Nothing if needed
-              pairs = zipWith (\host mPort -> (host, mPort)) hostList (map Just portList ++ repeat Nothing)
+              -- Exception: if just one port is provided, use it for all hosts
+              portList'
+                | length portList == 1 = repeat (fmap fst (List.uncons portList))
+                | otherwise = (map Just portList) ++ repeat Nothing
+              pairs = zipWith (\host mPort -> (host, mPort)) hostList portList'
            in map (\(host, mPortText) -> Host host (mPortText >>= parsePort)) pairs
 
   pure (ConnectionString user password hosts dbname remainingParams)
