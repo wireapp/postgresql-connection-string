@@ -3,7 +3,6 @@
 module PostgresqlConnectionString.Parsers where
 
 import qualified Data.CharSet as CharSet
-import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import qualified PercentEncoding
@@ -98,19 +97,37 @@ fromKeyValueParams params = do
         )
           params
 
-      -- Parse hosts if present - handle comma-separated hosts and ports
-      hosts = case hostText of
+  -- Validate the port count against the host count. A single port applies to
+  -- all hosts; any other count must match exactly (mirrors libpq's "could not
+  -- match N port numbers to M hosts" error).
+  let hostCount = maybe 1 (length . Text.splitOn ",") hostText
+  case portText of
+    Just portValue ->
+      let portCount = length (Text.splitOn "," portValue)
+       in unless (portCount == 1 || portCount == hostCount) $
+            fail
+              ( "could not match "
+                  <> show portCount
+                  <> " port numbers to "
+                  <> show hostCount
+                  <> " hosts"
+              )
+    Nothing -> pure ()
+
+  -- Parse hosts if present - handle comma-separated hosts and ports
+  let hosts = case hostText of
         Nothing -> []
         Just h ->
           let hostList = Text.splitOn "," h
               portList = maybe [] (Text.splitOn ",") portText
-              -- Pair up hosts with ports, padding with Nothing if needed
-              -- Exception: if just one port is provided, use it for all hosts
-              portList'
-                | length portList == 1 = repeat (fmap fst (List.uncons portList))
-                | otherwise = (map Just portList) ++ repeat Nothing
-              pairs = zipWith (\host mPort -> (host, mPort)) hostList portList'
-           in map (\(host, mPortText) -> Host host (mPortText >>= parsePort)) pairs
+              -- A single port applies to all hosts; otherwise the lists match
+              -- in length. An absent port uses the default port for every
+              -- host.
+              ports = case portList of
+                [] -> repeat Nothing
+                [single] -> repeat (Just single)
+                list -> map Just list
+           in zipWith (\host mPortText -> Host host (mPortText >>= parsePort)) hostList ports
 
   pure (ConnectionString user password hosts dbname remainingParams)
   where

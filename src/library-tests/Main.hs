@@ -442,16 +442,114 @@ main = hspec do
                 Left err -> expectationFailure ("URL roundtrip parse error: " <> Text.unpack err)
                 Right cs2 -> cs2 `shouldBe` cs
 
+        it "postgresql://a,b,c (default for all hosts)" do
+          let input = "postgresql://a,b,c"
+          case ConnectionString.parse input of
+            Left err -> expectationFailure (Text.unpack err)
+            Right cs ->
+              ConnectionString.toHosts cs
+                `shouldBe` [("a", Nothing), ("b", Nothing), ("c", Nothing)]
+
         it "host=host1,host2,host3 port=1,2,3" do
           let input = "host=host1,host2,host3 port=1,2,3"
           case ConnectionString.parse input of
             Left err -> expectationFailure ("Parse error: " <> Text.unpack err)
-            Right cs -> do
-              -- In keyword/value format, multiple hosts are separated by commas in the value
-              -- This is a special case that may not be supported yet
-              -- For now, just verify it parses
-              let hosts = ConnectionString.toHosts cs
-              length hosts `shouldSatisfy` (> 0)
+            Right cs ->
+              ConnectionString.toHosts cs
+                `shouldBe` [("host1", Just 1), ("host2", Just 2), ("host3", Just 3)]
+
+        it "host=a,b,c port=1,2,3 (don't depend on specific hostname pattern)" do
+          let input = "host=a,b,c port=1,2,3"
+          case ConnectionString.parse input of
+            Left err -> expectationFailure ("Parse error: " <> Text.unpack err)
+            Right cs ->
+              ConnectionString.toHosts cs
+                `shouldBe` [("a", Just 1), ("b", Just 2), ("c", Just 3)]
+
+        it "host=host1,host2 port=1,2" do
+          let input = "host=host1,host2 port=1,2"
+          case ConnectionString.parse input of
+            Left err -> expectationFailure ("Parse error: " <> Text.unpack err)
+            Right cs ->
+              ConnectionString.toHosts cs `shouldBe` [("host1", Just 1), ("host2", Just 2)]
+
+        it "host=host1,host2 port=1 (single port applies to all hosts)" do
+          let input = "host=host1,host2 port=1"
+          case ConnectionString.parse input of
+            Left err -> expectationFailure ("Parse error: " <> Text.unpack err)
+            Right cs ->
+              ConnectionString.toHosts cs `shouldBe` [("host1", Just 1), ("host2", Just 1)]
+
+        it "host=host1,host2,host3 port=1 (single port applies to all hosts)" do
+          let input = "host=host1,host2,host3 port=1"
+          case ConnectionString.parse input of
+            Left err -> expectationFailure ("Parse error: " <> Text.unpack err)
+            Right cs ->
+              ConnectionString.toHosts cs `shouldBe` [("host1", Just 1), ("host2", Just 1), ("host3", Just 1)]
+
+        it "host=a,b,c port=1 (don't depend on specific hostname pattern)" do
+          let input = "host=a,b,c port=1"
+          case ConnectionString.parse input of
+            Left err -> expectationFailure ("Parse error: " <> Text.unpack err)
+            Right cs ->
+              ConnectionString.toHosts cs `shouldBe` [("a", Just 1), ("b", Just 1), ("c", Just 1)]
+
+        it "rejects host=host1,host2,host3 port=1,2 (port count mismatch)" do
+          let input = "host=host1,host2,host3 port=1,2"
+          case ConnectionString.parse input of
+            Left err -> Text.unpack err `shouldContain` "could not match 2 port numbers to 3 hosts"
+            Right _ -> expectationFailure "Expected port count mismatch to be rejected"
+
+        it "rejects host=host1,host2 port=1,2,3 (port count mismatch)" do
+          let input = "host=host1,host2 port=1,2,3"
+          case ConnectionString.parse input of
+            Left err -> Text.unpack err `shouldContain` "could not match 3 port numbers to 2 hosts"
+            Right _ -> expectationFailure "Expected port count mismatch to be rejected"
+
+        it "rejects port=1,2 without host (port count mismatch)" do
+          let input = "port=1,2"
+          case ConnectionString.parse input of
+            Left err -> Text.unpack err `shouldContain` "could not match 2 port numbers to 1 hosts"
+            Right _ -> expectationFailure "Expected port count mismatch to be rejected"
+
+        it "host=a,b,c (default for all hosts)" do
+          let input = "host=a,b,c"
+          case ConnectionString.parse input of
+            Left err -> expectationFailure (Text.unpack err)
+            Right cs ->
+              ConnectionString.toHosts cs
+                `shouldBe` [("a", Nothing), ("b", Nothing), ("c", Nothing)]
+
+        it "host=a,b port=,2 (leading empty item selects default)" do
+          let input = "host=a,b port=,2"
+          case ConnectionString.parse input of
+            Left err -> expectationFailure (Text.unpack err)
+            Right cs ->
+              ConnectionString.toHosts cs `shouldBe` [("a", Nothing), ("b", Just 2)]
+
+        it "host=a,b,c port=1,,3 (middle empty item selects default)" do
+          let input = "host=a,b,c port=1,,3"
+          case ConnectionString.parse input of
+            Left err -> expectationFailure (Text.unpack err)
+            Right cs ->
+              ConnectionString.toHosts cs
+                `shouldBe` [("a", Just 1), ("b", Nothing), ("c", Just 3)]
+
+        it "host=a,b,c port=1,, (trailing empty items select default)" do
+          let input = "host=a,b,c port=1,,"
+          case ConnectionString.parse input of
+            Left err -> expectationFailure (Text.unpack err)
+            Right cs ->
+              ConnectionString.toHosts cs
+                `shouldBe` [("a", Just 1), ("b", Nothing), ("c", Nothing)]
+
+        it "host=a,b port='' (empty string selects default)" do
+          let input = "host=a,b port=''"
+          case ConnectionString.parse input of
+            Left err -> expectationFailure (Text.unpack err)
+            Right cs ->
+              ConnectionString.toHosts cs
+                `shouldBe` [("a", Nothing), ("b", Nothing)]
 
       describe "equivalence tests of the internal representation" do
         it "postgresql://host1:1,host2:2,host3:3/ is equivalent to host=host1,host2,host3 port=1,2,3" do
@@ -460,19 +558,22 @@ main = hspec do
           case (ConnectionString.parse url, ConnectionString.parse kv) of
             (Right cs1, Right cs2) -> do
               -- They should represent the same connection
-              -- At minimum, they should have the same number of hosts
-              length (ConnectionString.toHosts cs1) `shouldBe` length (ConnectionString.toHosts cs2)
+              let hosts1 = ConnectionString.toHosts cs1
+                  hosts2 = ConnectionString.toHosts cs2
+              hosts1 `shouldBe` [("host1", Just 1), ("host2", Just 2), ("host3", Just 3)]
+              hosts1 `shouldBe` hosts2
             (Left err, _) -> expectationFailure ("URL parse error: " <> Text.unpack err)
             (_, Left err) -> expectationFailure ("KV parse error: " <> Text.unpack err)
 
-        it "postgresql://host1:1,host2:2,host3/ is equivalent to host=host1,host2,host3 port=1,2" do
+        it "postgresql://host1:1,host2:2,host3/ is equivalent to host=host1,host2,host3 port=1,2," do
           let url = "postgresql://host1:1,host2:2,host3/"
-              kv = "host=host1,host2,host3 port=1,2"
+              kv = "host=host1,host2,host3 port=1,2,"
           case (ConnectionString.parse url, ConnectionString.parse kv) of
             (Right cs1, Right cs2) -> do
               -- They should represent the same connection
               let hosts1 = ConnectionString.toHosts cs1
                   hosts2 = ConnectionString.toHosts cs2
+              hosts1 `shouldBe` [("host1", Just 1), ("host2", Just 2), ("host3", Nothing)]
               hosts1 `shouldBe` hosts2
             (Left err, _) -> expectationFailure ("URL parse error: " <> Text.unpack err)
             (_, Left err) -> expectationFailure ("KV parse error: " <> Text.unpack err)
